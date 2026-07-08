@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PDF → Letter Print Simulator</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<style>
+  :root{
+    --bench:#3d4148;
+    --bench-deep:#33373d;
+    --paper:#fdfdfb;
+    --ink:#23262b;
+    --accent:#7db4f0;
+    --cut:#e33b3b;
+    --ok:#2e9e5b;
+    --mono:"SF Mono",ui-monospace,Consolas,monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{
+    font-family:-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    background:radial-gradient(1200px 600px at 50% -100px,#4a4f57 0%,var(--bench) 55%,var(--bench-deep) 100%);
+    color:var(--paper);min-height:100vh;padding:28px 20px 60px;
+  }
+  .wrap{max-width:1020px;margin:0 auto}
+  h1{font-size:1.3rem;font-weight:650}
+  header p{color:#c6cad1;font-size:.9rem;margin-top:6px;max-width:64ch}
+
+  /* drop zone */
+  #drop{
+    margin:20px 0;border:2px dashed rgba(255,255,255,.35);border-radius:12px;
+    padding:34px 20px;text-align:center;cursor:pointer;
+    transition:border-color .15s,background .15s;
+    background:rgba(255,255,255,.04);
+  }
+  #drop.over{border-color:var(--accent);background:rgba(125,180,240,.08)}
+  #drop strong{font-size:1rem}
+  #drop span{display:block;margin-top:6px;color:#aeb3bb;font-size:.83rem}
+  #file{display:none}
+
+  .controls{display:none;flex-wrap:wrap;gap:10px;margin:6px 0 20px;align-items:center}
+  .controls button{
+    font:inherit;font-size:.84rem;font-weight:600;padding:9px 15px;border-radius:8px;cursor:pointer;
+    border:1px solid rgba(255,255,255,.22);background:rgba(255,255,255,.06);color:var(--paper);
+  }
+  .controls button:hover{background:rgba(255,255,255,.13)}
+  .controls button.active{background:var(--paper);color:var(--ink);border-color:var(--paper)}
+  .controls button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  .controls .pgnav{margin-left:auto;display:flex;gap:8px;align-items:center;font-family:var(--mono);font-size:.8rem}
+  .controls .pgnav button{padding:6px 12px}
+
+  .stage{display:none;grid-template-columns:minmax(0,1fr) 320px;gap:26px;align-items:start}
+  @media (max-width:820px){.stage{grid-template-columns:1fr}}
+
+  .panel h2{font-size:.72rem;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:#aeb3bb;margin-bottom:12px}
+  .sheet-area{
+    background:rgba(0,0,0,.18);border:1px solid rgba(255,255,255,.09);border-radius:10px;
+    padding:26px;display:flex;justify-content:center;overflow:auto;
+  }
+  /* Letter sheet: sized in JS to fit panel while keeping 8.5:11 */
+  #sheet{
+    position:relative;background:#fff;box-shadow:0 8px 24px rgba(0,0,0,.45);
+    border-radius:2px;overflow:hidden;flex-shrink:0;
+  }
+  #pageCanvas{position:absolute;display:block}
+  .cutband{
+    position:absolute;pointer-events:none;
+    background:repeating-linear-gradient(45deg,rgba(227,59,59,.30) 0 6px,rgba(227,59,59,.12) 6px 12px);
+    border:1px dashed var(--cut);
+    display:flex;align-items:center;justify-content:center;
+    font-family:var(--mono);font-size:.62rem;font-weight:700;color:var(--cut);letter-spacing:.04em;
+    text-shadow:0 0 4px #fff;
+  }
+
+  .readout{
+    background:rgba(0,0,0,.22);border:1px solid rgba(255,255,255,.09);border-radius:10px;
+    padding:16px 18px;font-size:.86rem;line-height:1.6;color:#dfe2e7;
+  }
+  .readout strong{color:#fff}
+  .readout hr{border:none;border-top:1px solid rgba(255,255,255,.12);margin:12px 0}
+  .kv{font-family:var(--mono);font-size:.76rem;color:#aeb3bb;line-height:1.9}
+  .kv b{color:#e6e9ee;font-weight:600}
+  .badge{display:inline-block;font-family:var(--mono);font-size:.68rem;font-weight:700;padding:2px 8px;border-radius:4px;margin-bottom:8px}
+  .badge.cut{background:rgba(227,59,59,.18);color:#ff8f8f;border:1px solid rgba(227,59,59,.5)}
+  .badge.ok{background:rgba(46,158,91,.18);color:#7fe0a8;border:1px solid rgba(46,158,91,.5)}
+  #err{display:none;margin:14px 0;padding:12px 16px;border-radius:8px;background:rgba(227,59,59,.15);border:1px solid rgba(227,59,59,.5);color:#ffb0b0;font-size:.86rem}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Print your PDF on Letter — see the real result</h1>
+    <p>Upload any PDF. The white sheet below is Letter paper (8.5 × 11 in). Your page is placed on it exactly like a printer driver would — red hatched zones are what gets cut off.</p>
+  </header>
+
+  <div id="drop" tabindex="0" role="button" aria-label="Upload a PDF">
+    <strong>📄 Drop your PDF here or click to choose</strong>
+    <span>Stays in your browser — nothing is uploaded to a server</span>
+    <input type="file" id="file" accept="application/pdf">
+  </div>
+
+  <div id="err"></div>
+
+  <div class="controls" id="controls">
+    <button id="btn-actual" class="active">Actual size (100%)</button>
+    <button id="btn-fit">Shrink to fit</button>
+    <div class="pgnav">
+      <button id="prev" aria-label="Previous page">◀</button>
+      <span id="pginfo">1 / 1</span>
+      <button id="next" aria-label="Next page">▶</button>
+    </div>
+  </div>
+
+  <div class="stage" id="stage">
+    <div class="panel">
+      <h2>Letter paper output</h2>
+      <div class="sheet-area"><div id="sheet"><canvas id="pageCanvas"></canvas></div></div>
+    </div>
+    <div class="panel">
+      <h2>Diagnosis</h2>
+      <div class="readout" id="readout"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+pdfjsLib.GlobalWorkerOptions.workerSrc =
+  "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+
+// Letter in PDF points (1 pt = 1/72 in)
+const LETTER_W = 612, LETTER_H = 792;
+const PT_TO_MM = 25.4/72;
+
+let pdfDoc = null, pageNum = 1, mode = "actual", curPage = null;
+
+const drop = document.getElementById("drop");
+const fileInput = document.getElementById("file");
+const sheet = document.getElementById("sheet");
+const canvas = document.getElementById("pageCanvas");
+const readout = document.getElementById("readout");
+const errBox = document.getElementById("err");
+
+drop.addEventListener("click", () => fileInput.click());
+drop.addEventListener("keydown", e => { if(e.key==="Enter"||e.key===" ") fileInput.click(); });
+drop.addEventListener("dragover", e => { e.preventDefault(); drop.classList.add("over"); });
+drop.addEventListener("dragleave", () => drop.classList.remove("over"));
+drop.addEventListener("drop", e => {
+  e.preventDefault(); drop.classList.remove("over");
+  const f = e.dataTransfer.files[0];
+  if (f) loadFile(f);
+});
+fileInput.addEventListener("change", () => { if (fileInput.files[0]) loadFile(fileInput.files[0]); });
+
+document.getElementById("btn-actual").addEventListener("click", () => setMode("actual"));
+document.getElementById("btn-fit").addEventListener("click", () => setMode("fit"));
+document.getElementById("prev").addEventListener("click", () => gotoPage(pageNum-1));
+document.getElementById("next").addEventListener("click", () => gotoPage(pageNum+1));
+
+function showError(msg){ errBox.textContent = msg; errBox.style.display = "block"; }
+
+async function loadFile(file){
+  errBox.style.display = "none";
+  if (file.type !== "application/pdf" && !file.name.toLowerCase().endsWith(".pdf")){
+    showError("That doesn't look like a PDF. Please choose a .pdf file.");
+    return;
+  }
+  try{
+    const buf = await file.arrayBuffer();
+    pdfDoc = await pdfjsLib.getDocument({data: buf}).promise;
+    pageNum = 1;
+    document.getElementById("controls").style.display = "flex";
+    document.getElementById("stage").style.display = "grid";
+    drop.querySelector("strong").textContent = "📄 " + file.name + " — drop another PDF to replace";
+    await renderPage();
+  }catch(e){
+    console.error(e);
+    showError("Couldn't read this PDF (it may be corrupted or password-protected).");
+  }
+}
+
+function setMode(m){
+  mode = m;
+  document.getElementById("btn-actual").classList.toggle("active", m==="actual");
+  document.getElementById("btn-fit").classList.toggle("active", m==="fit");
+  if (pdfDoc) layout();
+}
+
+async function gotoPage(n){
+  if (!pdfDoc || n < 1 || n > pdfDoc.numPages) return;
+  pageNum = n;
+  await renderPage();
+}
+
+function classifySize(wPt, hPt){
+  const w = Math.min(wPt,hPt), h = Math.max(wPt,hPt);
+  const near = (a,b) => Math.abs(a-b) < 4;
+  if (near(w,595.28) && near(h,841.89)) return "A4";
+  if (near(w,612) && near(h,792))       return "Letter";
+  if (near(w,612) && near(h,1008))      return "Legal";
+  if (near(w,419.53) && near(h,595.28)) return "A5";
+  if (near(w,841.89) && near(h,1190.55))return "A3";
+  if (near(w,792) && near(h,1224))      return "Tabloid";
+  return "Custom";
+}
+
+async function renderPage(){
+  curPage = await pdfDoc.getPage(pageNum);
+  document.getElementById("pginfo").textContent = pageNum + " / " + pdfDoc.numPages;
+  // render at 2x for crispness
+  const vp1 = curPage.getViewport({scale:1});
+  const renderScale = Math.min(2, 1600/Math.max(vp1.width, vp1.height));
+  const vp = curPage.getViewport({scale: renderScale});
+  canvas.width = vp.width; canvas.height = vp.height;
+  const ctx = canvas.getContext("2d");
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  await curPage.render({canvasContext: ctx, viewport: vp}).promise;
+  layout();
+}
+
+function layout(){
+  const vp1 = curPage.getViewport({scale:1});
+  const pageW = vp1.width, pageH = vp1.height;      // PDF page in points
+  // Landscape pages: printer would use Letter landscape
+  const landscape = pageW > pageH;
+  const shW = landscape ? LETTER_H : LETTER_W;
+  const shH = landscape ? LETTER_W : LETTER_H;
+
+  // px per point so sheet fits the panel (~460px tall max)
+  const maxH = Math.min(560, window.innerHeight - 260);
+  const pxPerPt = Math.min(maxH / shH, 460 / shW);
+  sheet.style.width  = (shW * pxPerPt) + "px";
+  sheet.style.height = (shH * pxPerPt) + "px";
+
+  // print scale
+  const fitScale = Math.min(shW/pageW, shH/pageH);
+  const s = (mode === "actual") ? 1 : Math.min(1, fitScale);
+
+  const drawW = pageW * s * pxPerPt;
+  const drawH = pageH * s * pxPerPt;
+  // driver centers the page (Acrobat "Actual size" behavior)
+  const offX = ((shW*pxPerPt) - drawW) / 2;
+  const offY = ((shH*pxPerPt) - drawH) / 2;
+  canvas.style.width = drawW + "px";
+  canvas.style.height = drawH + "px";
+  canvas.style.left = offX + "px";
+  canvas.style.top  = offY + "px";
+
+  // remove old cut bands
+  sheet.querySelectorAll(".cutband").forEach(el => el.remove());
+
+  const overW_pt = Math.max(0, pageW*s - shW);   // total horizontal overflow in pt
+  const overH_pt = Math.max(0, pageH*s - shH);
+  const mm = v => (v*PT_TO_MM).toFixed(1);
+
+  if (mode === "actual" && (overW_pt > 0.5 || overH_pt > 0.5)){
+    if (overH_pt > 0.5){
+      const bandH = (overH_pt/2) * pxPerPt;
+      addBand(0, 0, "100%", bandH, "✂ " + mm(overH_pt/2) + " mm");
+      addBand(0, (shH*pxPerPt)-bandH, "100%", bandH, "✂ " + mm(overH_pt/2) + " mm");
+    }
+    if (overW_pt > 0.5){
+      const bandW = (overW_pt/2) * pxPerPt;
+      addBand(0, 0, bandW, "100%", "");
+      addBand((shW*pxPerPt)-bandW, 0, bandW, "100%", "");
+    }
+  }
+
+  // ---- readout ----
+  const sizeName = classifySize(pageW, pageH);
+  const clipped = mode==="actual" && (overW_pt>0.5 || overH_pt>0.5);
+  let verdict;
+  if (mode === "actual"){
+    verdict = clipped
+      ? `<span class="badge cut">CLIPPED AT 100%</span>
+         <strong>Content in the red zones will not print.</strong> Total loss:
+         ${overH_pt>0.5 ? mm(overH_pt)+" mm of height ("+mm(overH_pt/2)+" mm top and bottom)" : ""}
+         ${overW_pt>0.5 ? (overH_pt>0.5?" and ":"")+mm(overW_pt)+" mm of width" : ""}.
+         Headers, footers and page numbers are the usual victims.`
+      : `<span class="badge ok">FITS AT 100%</span>
+         <strong>This page prints completely on Letter with no scaling.</strong>`;
+  } else {
+    const pct = (Math.min(1, fitScale)*100).toFixed(1);
+    verdict = fitScale >= 1
+      ? `<span class="badge ok">NO SCALING NEEDED</span>
+         <strong>Page is smaller than Letter — printed at 100%.</strong>`
+      : `<span class="badge ok">FITS AT ${pct}%</span>
+         <strong>Everything prints, shrunk to ${pct}%.</strong>
+         Text and images get slightly smaller; extra white margins appear on the ${pageH/pageW > shH/shW ? "sides" : "top and bottom"}.`;
+  }
+
+  readout.innerHTML = verdict + `<hr>
+    <div class="kv">
+      Your page&nbsp;: <b>${mm(pageW)} × ${mm(pageH)} mm</b> (${sizeName}${landscape?", landscape":""})<br>
+      Paper&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;: <b>${landscape ? "279.4 × 215.9" : "215.9 × 279.4"} mm</b> (Letter${landscape?" landscape":""})<br>
+      Δ width&nbsp;&nbsp;: <b>${mm(shW-pageW)} mm</b><br>
+      Δ height&nbsp;: <b>${mm(shH-pageH)} mm</b>
+    </div>`;
+}
+
+function addBand(left, top, w, h, label){
+  const b = document.createElement("div");
+  b.className = "cutband";
+  b.style.left = typeof left==="number" ? left+"px" : left;
+  b.style.top  = typeof top==="number"  ? top+"px"  : top;
+  b.style.width  = typeof w==="number" ? w+"px" : w;
+  b.style.height = typeof h==="number" ? h+"px" : h;
+  b.textContent = label;
+  sheet.appendChild(b);
+}
+
+window.addEventListener("resize", () => { if (curPage) layout(); });
+</script>
+</body>
+</html>
