@@ -206,18 +206,11 @@ function classifySize(wPt, hPt){
 async function renderPage(){
   curPage = await pdfDoc.getPage(pageNum);
   document.getElementById("pginfo").textContent = pageNum + " / " + pdfDoc.numPages;
-  // render at 2x for crispness
-  const vp1 = curPage.getViewport({scale:1});
-  const renderScale = Math.min(3, 2600/Math.max(vp1.width, vp1.height));
-  const vp = curPage.getViewport({scale: renderScale});
-  canvas.width = vp.width; canvas.height = vp.height;
-  const ctx = canvas.getContext("2d");
-  ctx.clearRect(0,0,canvas.width,canvas.height);
-  await curPage.render({canvasContext: ctx, viewport: vp}).promise;
   layout();
 }
 
-function layout(){
+let renderTask = null;
+async function layout(){
   const vp1 = curPage.getViewport({scale:1});
   const pageW = vp1.width, pageH = vp1.height;      // PDF page in points
   // Landscape pages: printer would use Letter landscape
@@ -245,6 +238,19 @@ function layout(){
   canvas.style.height = drawH + "px";
   canvas.style.left = offX + "px";
   canvas.style.top  = offY + "px";
+
+  // render at the exact on-screen resolution × devicePixelRatio → crisp text
+  const dpr = window.devicePixelRatio || 1;
+  let renderScale = (drawW / pageW) * dpr;                 // device px per PDF point
+  renderScale = Math.min(renderScale, 4096 / Math.max(pageW, pageH)); // canvas size cap
+  const vp = curPage.getViewport({scale: renderScale});
+  canvas.width = Math.round(vp.width);
+  canvas.height = Math.round(vp.height);
+  const ctx = canvas.getContext("2d");
+  if (renderTask) renderTask.cancel();
+  renderTask = curPage.render({canvasContext: ctx, viewport: vp});
+  try { await renderTask.promise; }
+  catch(e){ if (!(e && e.name === "RenderingCancelledException")) console.error(e); }
 
   // remove old cut bands
   sheet.querySelectorAll(".cutband").forEach(el => el.remove());
@@ -309,7 +315,11 @@ function addBand(left, top, w, h, label){
   sheet.appendChild(b);
 }
 
-window.addEventListener("resize", () => { if (curPage) layout(); });
+let resizeTimer = null;
+window.addEventListener("resize", () => {
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => { if (curPage) layout(); }, 150);
+});
 </script>
 </body>
 </html>
