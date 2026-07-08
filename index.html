@@ -22,7 +22,7 @@
     background:radial-gradient(1200px 600px at 50% -100px,#4a4f57 0%,var(--bench) 55%,var(--bench-deep) 100%);
     color:var(--paper);min-height:100vh;padding:28px 20px 60px;
   }
-  .wrap{max-width:1020px;margin:0 auto}
+  .wrap{max-width:1400px;margin:0 auto}
   h1{font-size:1.3rem;font-weight:650}
   header p{color:#c6cad1;font-size:.9rem;margin-top:6px;max-width:64ch}
 
@@ -49,7 +49,7 @@
   .controls .pgnav{margin-left:auto;display:flex;gap:8px;align-items:center;font-family:var(--mono);font-size:.8rem}
   .controls .pgnav button{padding:6px 12px}
 
-  .stage{display:none;grid-template-columns:minmax(0,1fr) 320px;gap:26px;align-items:start}
+  .stage{display:none;grid-template-columns:minmax(0,1fr) 300px;gap:26px;align-items:start}
   @media (max-width:820px){.stage{grid-template-columns:1fr}}
 
   .panel h2{font-size:.72rem;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:#aeb3bb;margin-bottom:12px}
@@ -208,7 +208,7 @@ async function renderPage(){
   document.getElementById("pginfo").textContent = pageNum + " / " + pdfDoc.numPages;
   // render at 2x for crispness
   const vp1 = curPage.getViewport({scale:1});
-  const renderScale = Math.min(2, 1600/Math.max(vp1.width, vp1.height));
+  const renderScale = Math.min(3, 2600/Math.max(vp1.width, vp1.height));
   const vp = curPage.getViewport({scale: renderScale});
   canvas.width = vp.width; canvas.height = vp.height;
   const ctx = canvas.getContext("2d");
@@ -225,9 +225,10 @@ function layout(){
   const shW = landscape ? LETTER_H : LETTER_W;
   const shH = landscape ? LETTER_W : LETTER_H;
 
-  // px per point so sheet fits the panel (~460px tall max)
-  const maxH = Math.min(560, window.innerHeight - 260);
-  const pxPerPt = Math.min(maxH / shH, 460 / shW);
+  // px per point — let the sheet use most of the viewport height
+  const areaW = sheet.parentElement.clientWidth - 52; // sheet-area inner width
+  const maxH = Math.max(500, window.innerHeight - 180);
+  const pxPerPt = Math.min(maxH / shH, areaW / shW);
   sheet.style.width  = (shW * pxPerPt) + "px";
   sheet.style.height = (shH * pxPerPt) + "px";
 
